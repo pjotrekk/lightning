@@ -24,7 +24,7 @@ We'll need some additional dependencies:
 - Spring Web to be able to expose REST endpoints with an embedded Tomcat container
 - Spring Data MongoDB for an integration with MongoDB
 - Lombok to reduce lots of boilerplate code.
-- Embedded MongoDB Database. Just kidding! Why use some embedded MongoDB when there is Testcontainers to exercise integration tests against the real Apache Kafka and MongoDB instances. A really fantastic tool! I will bump the version from 1.14.3 to the fresh 1.15.0
+- I will use Testcontainers to easily perform integration tests on the real Apache Kafka and MongoDB instances. I will bump its version from 1.14.3 to the fresh 1.15.0.
 
 I will not use Spring for Apache Kafka - Beam will handle everything for us. We'll write some producer code ourselves to test our Beans with Beam pipeline but that's all. I added the 2.6.0 of kafka-clients dependency:
 ```xml
@@ -35,7 +35,7 @@ I will not use Spring for Apache Kafka - Beam will handle everything for us. We'
 </dependency>
 ```
 
-Everything is set up. Not quite! We need Beam dependencies too. We can find them in mvnrepository. 
+Also, Apache Beam dependencies are needed too. We can find them in mvnrepository. 
 ```xml
 <dependency>
     <groupId>org.apache.beam</groupId>
@@ -43,7 +43,7 @@ Everything is set up. Not quite! We need Beam dependencies too. We can find them
     <version>2.24.0</version>
 </dependency>
 ```
-I want to use Flink Runner under the hood. If I changed my mind and wanted to use Dataflow or Spark then I just need to change this dependency and PipelineOptions (later in this article).
+I want to use Flink for actual data processing under the hood. Beam makes it easy to swap underlying data processing engines. If I changed my mind and wanted to use Dataflow or Spark then I just need to change this dependency and PipelineOptions (later in this article).
 
 ```xml
 <dependency>
@@ -52,7 +52,7 @@ I want to use Flink Runner under the hood. If I changed my mind and wanted to us
     <version>2.24.0</version>
 </dependency>
 ```
-I also want to be able to read and write from Kafka, so I need this IO Beam dependency.
+I also want to be able to read and write from Kafka, so I need this Beam IO dependency.
 
 ```xml
 <dependency>
@@ -159,7 +159,7 @@ public class LightningConfiguration {
 }
 ```
 
-Flink streaming pipelines in Beam are blocking operations so they will need to be run  in a separate thread. To do so I'll create an Executor Bean with Lightning prefix for its Threads.
+Flink streaming pipelines in Beam are blocking operations so they will need to be run in a separate thread. To do so I'll create an Executor Bean with Lightning prefix for its Threads.
 
 In this configuration class I'll also define a Bean with Apache Beam's PipelineOptions that can be used across all the application. I will set just one parameter to use an embedded FlinkRunner. It starts Flink Master and job server automatically.
 
@@ -167,7 +167,7 @@ But you can also use Beam with an external Flink instance. You can read more abo
 
 There is no need to specify whether it's a streaming or batch pipeline. Beam will handle it automatically depending on the kind of the source.
 
-The major advantage of Beam is its flexibility when it comes to the runners choice. If you change your mind or you make a mistake and choose a data processing technology that doesn't fit you or gets deprecated - you can just change these pipeline options. The rest of code is reusable. You would be in a mess if you were writing pipelines in the native runner code and then want to change it to something else.
+The major advantage of Beam is its flexibility when it comes to the runners choice. If you change your mind or you make a mistake and choose a data processing technology that doesn't fit you or gets deprecated - you can just change these pipeline options. The rest of code is reusable. You would be in trouble if you were writing pipelines in the native runner code and then want to change it to something else.
 
 ## Data model
 
@@ -287,11 +287,11 @@ public class LightningGenerator implements Serializable {
   }
 }
 ```
-The generator is a Spring Bean (annotated with `@Component`) and generates a lightning with random coordinates (longitude in range(-180, 180) and latitude in range(-90, 90)), random power, current timestamp and whether is stroke the ground. What is important it implements `Serializable`. Without that Beam would not be able to apply it to the pipeline that is executed in the worker, hence the need for serialization.
+The generator is a Spring Bean (annotated with `@Component`) and generates a lightning with random coordinates (longitude in range(-180, 180) and latitude in range(-90, 90)), random power, current timestamp and whether it stroke the ground. What is important it implements `Serializable`. Without that Beam would not be able to apply it to the pipeline that is executed in the worker, hence the need for serialization.
 
 ### Lightning emulator - write to Apache Kafka using Apache Beam streaming pipeline
 
-The next step to write our emulator is to write the actual emulator:
+The next step is to implement the emulator as below:
 ```java
 @Component
 @Profile("withEmulator")
@@ -363,7 +363,7 @@ public class LightningEmulator {
 A lot is going on here.
 `@Profile("withEmulator")` - the app is supposed to read data from the real lightning detectors so we want to have the ability to enable/disable the emulator. There are lots of ways to specify the Spring Profile. I've chosen to have it in the application.yml as `spring.profiles.active` so you can just run the app without additional params. To disable it just comment/remove these lines.
 
-`@Log4j2`, `@RequiredArgsConstructor` - these annotations are the Lombok ones. The first generates logger (We can use it via e.g. `log.info("message")`), the second generates a constructor for all fields that are final. As you see it fits great with Constructor Dependency Injection!
+`@Log4j2`, `@RequiredArgsConstructor` - these are Lombok annotations. The first generates a logger (We can use it via e.g. `log.info("message")`), the second generates a constructor for all fields that are final. As you see it fits great with Constructor Dependency Injection!
 We are injecting the Environment with all the needed information about the Kafka instance we're going to write to, the LightningGenerator we've just created (it's a @Component so we can inject it via constructor) and the Executor to run the pipeline in a separate Thread.
 
 Now let's get to the core - `sendLightningData()` method.
@@ -371,15 +371,15 @@ At first it receives a `PipelineOptions` Bean and creates a `Pipeline` object us
 
 Then it creates a `GenerateSequence` Beam PTransform that generate sequence of `Long` values in the specified (from, to) range. If we don't specify `.to(limit)` then we get an infinite streaming input for our pipeline. Otherwise it's a simple batch. I also specified `.atRate(count, duration)` to specify how many elements to produce in given duration. I've chosen 1 element per 2 seconds. This object is applied to the pipeline.
 
-The next step is to map the value to something actually useful. `MapElements` transform enables just that. It's similiar to Java's Stream API `.map` function. It accepts a SimpleFunction object that we defined below. The lightning is generated and outputted as Kafka's `ProducerRecord`.
+The next step is to map the value to something actually useful. `MapElements` transform enables just that. It's similiar to Java's Stream API `.map` function. It accepts a SimpleFunction object that we defined below. The lightning is generated and emitted as Kafka's `ProducerRecord`.
 
-`.setCoder` is super important. For a simple types Beam does not require to specify a coder. But for a custom ones it needs to have the coder specified. The runner needs to be able to serialize and deserialize the object that are sent through the pipeline. It's not a simple in-memory stream.
+`.setCoder` is super important. Beam does not require to specify a coder for simple types, but for custom ones it needs to have a coder specified. The runner needs to be able to serialize and deserialize objects that are sent through the pipeline. It's not a simple in-memory stream.
 
 Writing to Kafka is managed by applying the `KafkaIO.Write` transform that is built using the application properties using the convenient builder function.
 
 It wouldn't be complete without the `pipeline.run()` statement that actually executes our pipeline. As this is a streaming pipeline I don't use `.waitUntilFinish()` but instead return the `PipelineResult`. It will be easier to test.
 
-`.runPipeline()` is executed asynchronically right after the Bean's initialization in with `@PostConstruct` annotation's help.
+`.runPipeline()` is executed asynchronously right after the Bean's initialization in with `@PostConstruct` annotation's help.
 
 ## LightningReceiver - read from Apache Kafka and write to MongoDB
 
@@ -474,7 +474,7 @@ This Bean reads from the Apache Kafka instance to MongoDB.
 
 Before applying the KafkaIO.Read I want to set `.withMaxNumRecords()` conditionally. It allows me to choose whether we want a batch (with maxNumRecords set) or a streaming pipeline. It will be very useful for testing.
 
-Then the json string is parsed to MongoDB bson Document. This is the class required to write to MongoDB.
+Next the json string is parsed to MongoDB bson Document. This is the class required to write to MongoDB.
 The last step is to write the `Document` with lightning data to MongoDB using Beam's MongoDbIO.Write. We just apply it as everything else to the Mongo Collection 'lightnings'.
 
 But why stop there? Let's add an another branch to the pipeline tree starting with `applyCountStrokeTheGroundLightnings(jsonLightningData)`. We can do such a thing to every PCollection object.
@@ -490,7 +490,7 @@ Later the count value is mapped to Document with an information of the time wind
 
 Then the document is written to another MongoDB Collection: strikes.
 
-Like the Emulator this Bean is also executed asynchronically after its initialization via the `Executor` in `@PostConstruct` annotated method.
+Like the Emulator this Bean is also executed asynchronously after its initialization via the `Executor` in `@PostConstruct` annotated method.
 
 ### Exposing the data via REST API
 To connect a Spring Boot application to the Mongo instance there are required few steps.
@@ -519,7 +519,7 @@ public class MongoConfig extends AbstractMongoClientConfiguration {
 }
 ```
 
-Here we defina a `@Configuration` Bean that extends `AbstractMongoClientConfiguration`. Just override few methods, privide our Environment parameters and voila! We have integrated MongoDB to our app.
+Here we define a `@Configuration` Bean that extends `AbstractMongoClientConfiguration`. Just override few methods, privide our Environment parameters and voila! We have integrated MongoDB to our app.
 
 ```java
 public interface LightningRepository extends MongoRepository<Lightning, String> {
