@@ -1,0 +1,23 @@
+mongo:
+  host: mongodb://localhost:27017
+  database: lightning_db
+  collection:
+    lightnings: lightnings
+    strikes: strikes
+beam:
+  window:
+    size: 60
+
+kafka:
+  bootstrap:
+    servers: localhost:9092
+  topic: lightning_topic
+  auto:
+    offset:
+      reset: latest
+#  Enable to change infinite streaming to batch with 30 elements
+#  limit: 30
+
+spring:
+  profiles:
+    active: withEmulator
