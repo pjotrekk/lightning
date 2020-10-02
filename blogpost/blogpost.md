@@ -7,8 +7,7 @@ I will also write an emulator that will simulate the detectors that receive the 
 
 All the data processing will be executed via Apache Beam with Apache Flink as the runner. The endpoints will use Spring Data repositories which is a super convenient tool for this NoSQL database integration.
 
-If you are not familiar with Spring Boot I encourage you to read Michal's great [Spring Boot article](https://www.polidea.com/blog/what-is-spring-boot-first-steps-with-spring/).
-
+If you are not familiar with Spring Boot I encourage you to read Michal's great [Spring Boot article](https://www.polidea.com/blog/what-is-spring-boot-first-steps-with-spring/). To learn more about Apache Beam I recommend Kamil's [Apache Beam Tutorial](https://www.polidea.com/blog/apache-beam-tutorial-and-beginners-guide/) and [Apache Beam Quickstart](https://beam.apache.org/get-started/quickstart-java/).
 
 ## Setting things up
 
