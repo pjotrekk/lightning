@@ -4,9 +4,10 @@ mongo:
   collection:
     lightnings: lightnings
     strikes: strikes
+
 beam:
   window:
-    size: 60
+    size: 3600  # in seconds
 
 kafka:
   bootstrap:

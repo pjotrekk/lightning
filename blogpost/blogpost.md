@@ -1,7 +1,7 @@
 # Apache Beam streaming in a Spring Boot application. Use case.
 In this blog post I'll write a simple Spring Boot application using Apache Beam to stream data (with Apache Flink under the hood) from Apache Kafka to MongoDB and expose endpoints providing real-time data. The application will simulate a data center that receives data about lightnings around the world from a Kafka instance.
 
-It will expose 2 endpoints: one that returns up-to-date data about received lightnings and the second one that returns how many lightnings stroke the ground in one minute time range.
+It will expose 2 endpoints: one returns up-to-date data about received lightnings, and the second returns how many lightnings stroke the ground in a given time range.
 
 I will also write an emulator that will simulate the detectors that receive the lightning and send the data to a Kafka instance.
 
@@ -11,13 +11,13 @@ If you are not familiar with Spring Boot I encourage you to read Michal's great 
 
 ## Setting things up
 
-At first I want to use Spring Boot. I will use Spring Initializr so I can easily start with a ready-to-go project.
+First I want to use Spring Boot. I will use Spring Initializr so I can easily start with a ready-to-go project.
 
 ![image](initializr.png)
 
 I usually use Gradle but for this simple project I've chosen Maven as the build tool - it's popular and simple. I'll not do any magic here so it's perfectly sufficient.
 
-Next, I checked Spring Boot version 2.2.11 because the Apache Beam's MongoDB IO uses Mongo Java driver 3. The later versions of Spring Data MongoDB use Mongo Java Driver 4 so for now they are not compatible.
+Next, I checked Spring Boot version 2.2.11 because the Apache Beam's MongoDB IO uses Mongo Java driver 3. Later versions of Spring Data MongoDB use Mongo Java Driver 4 so for now they are not compatible.
 
 Some additional dependencies are needed:
 - Spring Web to be able to expose REST endpoints with an embedded Tomcat container
@@ -25,7 +25,6 @@ Some additional dependencies are needed:
 - Lombok to reduce lots of boilerplate code.
 - I will use Testcontainers to easily perform integration tests on the real Apache Kafka and MongoDB instances. I will bump its version from 1.14.3 to the fresh 1.15.0.
 
-I will not use Spring for Apache Kafka - Beam will handle everything for us. I'll write some producer code ourselves to test our Beans with Beam pipeline but that's all. I added the 2.6.0 of kafka-clients dependency:
 ```xml
 <dependency>
     <groupId>org.apache.kafka</groupId>
@@ -34,7 +33,12 @@ I will not use Spring for Apache Kafka - Beam will handle everything for us. I'l
 </dependency>
 ```
 
-Also, Apache Beam dependencies are needed too. They can be found in mvnrepository. 
+I will not use Spring for Apache Kafka - Beam will handle everything for us. I'll write some producer code to test our Beans with Beam pipeline but that's all. I added the 2.6.0 of kafka-clients dependency:
+
+Also, Apache Beam dependencies are needed too. They can be found in mvnrepository.
+
+I want to use Flink for actual data processing under the hood. Beam makes it easy to swap underlying data processing engines. If I changed my mind and wanted to use Dataflow or Spark then I just need to change this dependency and PipelineOptions (later in this article).
+ 
 ```xml
 <dependency>
     <groupId>org.apache.beam</groupId>
@@ -42,7 +46,8 @@ Also, Apache Beam dependencies are needed too. They can be found in mvnrepositor
     <version>2.24.0</version>
 </dependency>
 ```
-I want to use Flink for actual data processing under the hood. Beam makes it easy to swap underlying data processing engines. If I changed my mind and wanted to use Dataflow or Spark then I just need to change this dependency and PipelineOptions (later in this article).
+
+I also want to be able to read and write from Kafka, so I need this Beam IO dependency.
 
 ```xml
 <dependency>
@@ -51,7 +56,8 @@ I want to use Flink for actual data processing under the hood. Beam makes it eas
     <version>2.24.0</version>
 </dependency>
 ```
-I also want to be able to read and write from Kafka, so I need this Beam IO dependency.
+
+Same, for the ability to write to MongoDB.
 
 ```xml
 <dependency>
@@ -60,13 +66,13 @@ I also want to be able to read and write from Kafka, so I need this Beam IO depe
     <version>2.24.0</version>
 </dependency>
 ```
-Same, for the ability to write to MongoDB.
 
-Right now our app contains all the needed dependencies and a simple Java class LightningApplication.
+Now the app contains all the needed dependencies and a simple Java class LightningApplication.
 
 ### Set the Apache Kafka and MongoDB instances
 
-The Lightning app will connect to Apache Kafka and MongoDB. They can be easily set using Docker Compose:
+The Lightning app will connect to Apache Kafka and MongoDB. They can be easily set using Docker Compose. It sets up an Apache Kafka linked with Apache Zookeeper and a MongoDB instances.
+
 ```yml
 version: '3.7'
 
@@ -101,11 +107,13 @@ services:
     environment:
       - MONGO_INITDB_DATABASE=lightning_db
 ```
-This docker-compose file sets up an Apache Kafka linked with Apache Zookeeper and a MongoDB instances.
 
 ### Spring Boot app configuration
 
-Now get back to the app. Here are all the needed configurations for application.yml:
+Now get back to the app. In this `application.yml` I define mongo, beam and kafka environment properties so the app will have one source of truth. It's in Yaml file format that is way more readable than .properties files. Spring supports both formats.
+
+`beam.window.size` defines the size of the windows which is a Beam's feature to group pipeline input by timestamps.
+
 ```yml
 mongo:
   host: mongodb://localhost:27017
@@ -113,9 +121,10 @@ mongo:
   collection:
     lightnings: lightnings
     strikes: strikes
+
 beam:
   window:
-    size: 60
+    size: 3600  # in seconds
 
 kafka:
   bootstrap:
@@ -129,8 +138,17 @@ spring:
   profiles:
     active: withEmulator
 ```
-Here I define mongo, beam and kafka environment properties so the app will have one source of truth. It's in Yaml file format that is way more readable than .properties files. Spring supports both formats.
 
+Flink streaming pipelines in Beam are blocking operations, so they will need to be run in a separate thread. To do so I'll create an Executor Bean with Lightning prefix for its Threads.
+
+In this configuration class I'll also define a Bean with Apache Beam's PipelineOptions that can be used across all the application. I will set just one parameter to use an embedded Flink.
+You can also use Beam with an external Flink instance. More about that at [Beam flink runner documentation](https://beam.apache.org/documentation/runners/flink/).
+
+There is no need to specify whether it's a streaming or batch pipeline. Beam will handle it automatically depending on the kind of the source.
+
+The major advantage of Beam is its flexibility when it comes to the runners choice. If you change your mind or you make a mistake and choose a data processing technology that doesn't fit you or gets deprecated - you can just change these pipeline options. The rest of code is reusable. You would be in trouble if you were writing pipelines in the native runner code and then wanted to change it to something else.
+
+The whole configuration class:
 
 ```java
 @Configuration
@@ -156,19 +174,12 @@ public class LightningConfiguration {
 }
 ```
 
-Flink streaming pipelines in Beam are blocking operations so they will need to be run in a separate thread. To do so I'll create an Executor Bean with Lightning prefix for its Threads.
-
-In this configuration class I'll also define a Bean with Apache Beam's PipelineOptions that can be used across all the application. I will set just one parameter to use an embedded FlinkRunner. It starts Flink Master and job server automatically.
-
-But you can also use Beam with an external Flink instance. You can read more about that at [Beam flink runner documentation](https://beam.apache.org/documentation/runners/flink/).
-
-There is no need to specify whether it's a streaming or batch pipeline. Beam will handle it automatically depending on the kind of the source.
-
-The major advantage of Beam is its flexibility when it comes to the runners choice. If you change your mind or you make a mistake and choose a data processing technology that doesn't fit you or gets deprecated - you can just change these pipeline options. The rest of code is reusable. You would be in trouble if you were writing pipelines in the native runner code and then want to change it to something else.
-
 ## Data model
 
 ### Coordinates
+
+Coordinates are a simple pair of longitude and latitude.
+I'm using a lot of Lombok annotations here to generate getters, setters and constructors as well as equals and hashcode. What is interesting here is the staticName of the constructor. It makes the constructor private and replaces it with static factory pattern.
 
 ```java
 @Getter
@@ -181,13 +192,21 @@ public class Coordinates {
   double latitude;
 }
 ```
-Coordinates are a simple pair of longitude and latitude.
-I'm using a lot of Lombok here to generate getters, setters and constructors as well as equals and hashcode. What is interesting here is the staticName of the constructor. It makes the constructor private and replaces it with static factory pattern. Coordinates can then be created like this:
-```
-Coordinates coord = Coordinates.of(4.0, 2.0);
-```
+
+Coordinates can then be created like this:
+ 
+ ```
+ Coordinates coord = Coordinates.of(4.0, 2.0);
+ ```
 
 ### Lightning
+
+`@Document` annotation is for MongoDB integration. Its parameter `collection` specifies the MongoDB Collection that it is bound to. Later I will be able to retrieve data from the repository using this class.
+
+The rest of class annotations are the Lombok ones that are quite self-explanatory. I want to exclude `id` from equals so it will be easier to test. I need setters and empty contructor for Jackson to be able to parse it to/from json representation out of the box.
+
+`@Id` annotation goes along with `@Document`. It specifies the id of the Mongo object.
+The lightning object contains information about its power (in Watts), timestamp, whether it stroke the ground, and the coordinates where it happened on the Planet.
 
 ```java
 @Document(collection = "lightnings")
@@ -207,28 +226,24 @@ public class Lightning {
 }
 ```
 
-`@Document` annotation is for MongoDB integration. Its parameter `collection` specifies the MongoDB Collection that it is bound to. Later I will be able to retrieve data from the repository using this class.
+An example JSON representation of a lightning will be:
 
-The rest of class annotations are the Lombok ones that are quite self-explanatory. I want to exclude `id` from equals so it will be easier to test. I need setters and empty contructor for Jackson to be able to parse it to/from json representation out of the box.
-
-`@Id` annotation goes along with `@Document`. It specifies the id of the Mongo object.
-The lightning object contains information about its power (in Watts), timestamp, whether it stroke the ground and the coordinates where it happened on the Planet.
-
-An example JSON representation of our lightning will be:
 ```json
 {
-  id: "some_id",
-  power: 5555,
-  strokeTheGround: true,
-  timestamp: 857584849,
-  coordinates: {
-    longitude: 45.32,
-    latitude: -54.21
+  "id": "some_id",
+  "power": 5555,
+  "strokeTheGround": true,
+  "timestamp": 857584849,
+  "coordinates": {
+    "longitude": 45.32,
+    "latitude": -54.21
   }
 }
 ```
 
 ### Strikes
+Later I'll gather also an information how many lightnings stroke the ground in a given time interval represented as millisecond timestamps [from, to].
+
 ```java
 @Document(collection = "strikes")
 @Getter
@@ -246,20 +261,22 @@ public class Strikes {
   long to;
 }
 ```
-Later I'll gather also an information how many lightnings stroke the ground in a one minute time inteval represented as millisecond timestamps [from, to].
 
 Json representation:
 ```json
 {
-  strikes: 54,
-  from: 100000,
-  to: 160000
+  "strikes": 54,
+  "from": 100000,
+  "to": 160000
 }
 ```
 ## Writing the logic
 ### Lightning generator
 
-The emulator needs a generator that will produce randomly generated lightning objects:
+The emulator needs a generator that will produce randomly generated lightning objects.
+
+The generator is a Spring Bean (annotated with `@Component`) and generates a lightning with random coordinates (longitude in range(-180, 180) and latitude in range(-90, 90)), random power, current timestamp and whether it stroke the ground. What is important it implements `Serializable`. Without that Beam would not be able to apply it to the pipeline that is executed in the worker, hence the need for serialization.
+
 ```java
 @Component
 public class LightningGenerator implements Serializable {
@@ -284,7 +301,6 @@ public class LightningGenerator implements Serializable {
   }
 }
 ```
-The generator is a Spring Bean (annotated with `@Component`) and generates a lightning with random coordinates (longitude in range(-180, 180) and latitude in range(-90, 90)), random power, current timestamp and whether it stroke the ground. What is important it implements `Serializable`. Without that Beam would not be able to apply it to the pipeline that is executed in the worker, hence the need for serialization.
 
 ### Lightning emulator - write to Apache Kafka using Apache Beam streaming pipeline
 
@@ -306,9 +322,7 @@ public class LightningEmulator {
   }
 
   public PipelineResult sendLightningData() {
-    PipelineOptions options = PipelineOptionsFactory.create();
-    options.setRunner(FlinkRunner.class);
-    Pipeline pipeline = Pipeline.create(options);
+    Pipeline pipeline = Pipeline.create(pipelineOptions);
 
     pipeline
         .apply("Generate one number/2sec", createGenerator(env.getProperty("kafka.limit", Integer.class)))
@@ -351,7 +365,7 @@ public class LightningEmulator {
         throw new RuntimeException("Could not map lightning object to json string", e);
       }
       log.info("Writing lightning {} to kafka", jsonLightning);
-      return new ProducerRecord<>(topic, idCounter.getAndIncrement(), jsonLightning);
+      return new ProducerRecord<>(topic, null, lightning.getTimestamp(), idCounter.getAndIncrement(), jsonLightning);
     }
   }
 }
@@ -367,7 +381,7 @@ I'm injecting the Environment with all the needed information about the Kafka in
 Now let's get to the core - `sendLightningData()` method.
 At first it receives a `PipelineOptions` Bean and creates a `Pipeline` object using the given options.
 
-Then it creates a `GenerateSequence` Beam PTransform that generate sequence of `Long` values in the specified (from, to) range. If you don't specify `.to(limit)` then you get an infinite streaming input for our pipeline. Otherwise it's a simple batch. I also specified `.atRate(count, duration)` to specify how many elements to produce in given duration. I've chosen 1 element per 2 seconds. This object is applied to the pipeline.
+Then it creates a `GenerateSequence` Beam PTransform that generate sequence of `Long` values in the specified (from, to) range. If you don't specify `.to(limit)` then you get an infinite streaming input for your pipeline. Otherwise it's a simple batch. I also specified `.atRate(count, duration)` to specify how many elements to produce in given duration. I've chosen 1 element per 2 seconds. This object is applied to the pipeline.
 
 The next step is to map the value to something actually useful. `MapElements` transform enables just that. It's similiar to Java's Stream API `.map` function. It accepts a SimpleFunction object that is defined below. The lightning is generated and emitted as Kafka's `ProducerRecord`.
 
@@ -375,17 +389,22 @@ The next step is to map the value to something actually useful. `MapElements` tr
 
 Writing to Kafka is managed by applying the `KafkaIO.Write` transform that is built using the application properties using the convenient builder function.
 
-It wouldn't be complete without the `pipeline.run()` statement that actually executes our pipeline. As this is a streaming pipeline I don't use `.waitUntilFinish()` but instead return the `PipelineResult`. It will be easier to test.
+It wouldn't be complete without the `pipeline.run()` statement that actually executes the pipeline. As this is a streaming pipeline I don't use `.waitUntilFinish()` but instead return the `PipelineResult`. It will be easier to test.
 
 `.runPipeline()` is executed asynchronously right after the Bean's initialization in with `@PostConstruct` annotation's help.
 
 ## LightningReceiver - read from Apache Kafka and write to MongoDB
+
+Lightning receiver is the core of the app's logic. It streams data from Apache Kafka's instance and writes it to a MongoDB instance. The implementation is as follows:
 
 ```java
 @Component
 @Log4j2
 @RequiredArgsConstructor
 public class LightningReceiver {
+  private static final Duration ALLOWED_LATENESS = Duration.standardMinutes(120);
+  private static final Duration TEN_MINUTES = Duration.standardMinutes(10);
+
   private final Environment env;
   private final PipelineOptions pipelineOptions;
   private final Executor executor;
@@ -403,7 +422,8 @@ public class LightningReceiver {
         .withTopic(env.getProperty("kafka.topic"))
         .withConsumerConfigUpdates(ImmutableMap.of("auto.offset.reset", env.getProperty("kafka.auto.offset.reset")))
         .withKeyDeserializer(LongDeserializer.class)
-        .withValueDeserializer(StringDeserializer.class);
+        .withValueDeserializer(StringDeserializer.class)
+        .withCreateTime(Duration.standardDays(1));
 
     Integer limit = env.getProperty("kafka.limit", Integer.class);
     if (limit != null) {
@@ -434,24 +454,34 @@ public class LightningReceiver {
 
   private void applyCountStrokeTheGroundLightnings(PCollection<Document> pc) {
     Integer windowSize = env.getProperty("beam.window.size", Integer.class);
+    Duration windowDuration = Duration.standardSeconds(windowSize);
     pc
-      .apply("Filter hit the ground ones", Filter.by(document -> document.getBoolean("strokeTheGround")))
-      .apply("Add timestamp", WithTimestamps.of(document -> Instant.now()))
-      .apply("Apply fixed windows", Window.into(FixedWindows.of(Duration.standardSeconds(windowSize))))
+      .apply("Filter by strokeTheGround", Filter.by(document -> document.getBoolean("strokeTheGround")))
+      .apply(
+          "Apply fixed windows",
+          Window.<Document>into(FixedWindows.of(windowDuration))
+              .triggering(
+                  AfterWatermark.pastEndOfWindow()
+                      .withLateFirings(
+                          AfterProcessingTime.pastFirstElementInPane()
+                              .plusDelayOf(TEN_MINUTES)))
+              .withAllowedLateness(ALLOWED_LATENESS)
+              .accumulatingFiredPanes()
+      )
       .apply(
           "Count lightnings that stroke the ground this minute",
           Combine.globally(Count.<Document>combineFn()).withoutDefaults())
-      .apply("Map to Mongo Document", ParDo.of(new CreateStrikesJson(windowSize)))
+      .apply("Map to Mongo Document", ParDo.of(new CreateStrikesDocument(windowSize)))
       .apply("Write strikes count to database", MongoDbIO.write()
           .withDatabase(env.getProperty("mongo.database"))
           .withCollection(env.getProperty("mongo.collection.strikes"))
           .withUri(env.getProperty("mongo.host")));
   }
 
-  private static class CreateStrikesJson extends DoFn<Long, Document> {
+  private static class CreateStrikesDocument extends DoFn<Long, Document> {
     private final long seconds;
 
-    CreateStrikesJson(long seconds) {
+    CreateStrikesDocument(long seconds) {
       this.seconds = seconds;
     }
 
@@ -470,7 +500,7 @@ public class LightningReceiver {
 
 This Bean reads from the Apache Kafka instance to MongoDB.
 
-Before applying the KafkaIO.Read I want to set `.withMaxNumRecords()` conditionally. It allows me to choose whether I want a batch (with maxNumRecords set) or a streaming pipeline. It will be very useful for testing.
+Before applying the KafkaIO.Read I want to set `.withMaxNumRecords()` conditionally. It allows me to choose whether I want a batch (with maxNumRecords set) or a streaming pipeline. It will be very useful for testing. `.withCreateTime(maxDelay)` sets the timestamp that comes with a KafkaRecord with a maxDelay specified. It's essential for windowing which will come up in a moment.
 
 Next the json string is parsed to MongoDB bson Document. This is the class required to write to MongoDB.
 The last step is to write the `Document` with lightning data to MongoDB using Beam's MongoDbIO.Write. Just apply it as everything else to the Mongo Collection 'lightnings'.
@@ -480,18 +510,19 @@ But why stop there? Let's add an another branch to the pipeline tree starting wi
 This one is a bit more complicated and uses more of Beam's features.
 At first it filters out the lightnings that did not strike the ground (they discharged in the sky) using the `Filter.by(predicate)` transform.
 
-Next it applies a timestamp to each records using `WithTimestamps.of` function.
-Then the streaming input gets windowed to 1 minute windows with `Window.into(FixedWindows.of(duration))`.
+Then the streaming input gets windowed to the given windows value (from `beam.window.size`) with `Window.into(FixedWindows.of(duration))`. `.withLateFirings(TEN_MINUTES)` will emit late records every ten minutes. Records that come after `ALLOWED_LATENESS` are discarded and there are no emissions for this window anymore. A quick reminder - timestamp has been attached to the input in readFromKafka' `.withCreateTime()`.
 
-The windows are evaluated in combine transform `Combine.globally(Count.<Document>combineFn()).withoutDefaults()`. It counts every element and return the sum.
+Windows are evaluated in combine transform `Combine.globally(Count.<Document>combineFn()).withoutDefaults()`. It counts every element for each window.
 Later the count value is mapped to Document with an information of the time window it counted the lightnings. It's done using ParDo.of(DoFn), which is another method of applying some transformation to the input, like MapElements. The class ParDo requires to inherit from DoFn and implement processElement method with `@ProcessElement` annotation.
 
-Then the document is written to another MongoDB Collection: strikes.
+Then the document is written to another MongoDB Collection: `strikes`.
 
 Like the Emulator this Bean is also executed asynchronously after its initialization via the `Executor` in `@PostConstruct` annotated method.
 
 ### Exposing the data via REST API
-To connect a Spring Boot application to the Mongo instance there are required few steps.
+
+Here is defined a `@Configuration` Bean that extends `AbstractMongoClientConfiguration`. Just override few methods, provide all the needed Environment parameters and voila! MongoDB has been integrated to the Lightning app.
+
 ```java
 @Configuration
 @EnableMongoRepositories
@@ -516,22 +547,21 @@ public class MongoConfig extends AbstractMongoClientConfiguration {
   }
 }
 ```
+Here I define a MongoRepository that returns Lightning objects. It can also filter its results by providing a timestamp and return only the lightnings after that time.
 
-Here is defined a `@Configuration` Bean that extends `AbstractMongoClientConfiguration`. Just override few methods, privide our Environment parameters and voila! MongoDB has been integrated to the Lightning app.
+Remember that Lightning class had defined `@Document(collection = "lightnings")` - that's exactly how the repository knows where to search for the data.
 
 ```java
 public interface LightningRepository extends MongoRepository<Lightning, String> {
   List<Lightning> findByTimestampGreaterThan(long timestamp);
 }
 ```
-Here I define a MongoRepository that returns Lightning objects. It can also filter its results by providing a timestamp and return only the lightnings after that time.
-
-Remember that Lightning class had defined `@Document(collection = "lightnings")` - that's exactly how the repository knows where to search for the data.
+I created another repository, this time for Strikes.
 
 ```java
 public interface StrikesRepository extends MongoRepository<Strikes, String> { }
 ```
-I created another repository, this time for Strikes.
+A REST controller for lightnings available at `localhost:8080/lightnings` with a possible timestamp parameter.
 
 ```java
 @RestController
@@ -550,7 +580,7 @@ public class LightningController {
 }
 ```
 
-A REST controller for lightnings available at `localhost:8080/lightnings` with a possible timestamp parameter.
+... and a REST controller for strikes:
 
 ```java
 @RestController
@@ -565,13 +595,32 @@ public class StrikesController {
 }
 ```
 
-And a REST controllet for strikes.
 
 ## Test the app
 
 I will write separate integration tests for the `LightningReceiver` and `LightningEmulator` classes.
 
 ### LightningReceiver test
+
+To test the app that runs streaming pipelines there is a need for an ability to stop them. Luckily some of the Apache Beam's transforms provide a utility like `withMaxNumRecords` that I used earlier.
+
+The test runs with `@RunWith(SpringRunner.class)` to be able to initialize Spring context and `@ContextConfiguration` imports necessary Beans and provides an initializer - that's because kafka bootstrap servers and mongo host will be known in runtime so I couldn't use an `test-application.yml` in the test's resources.
+
+Hence the need for `Initializer` class that replaces the `Environment` with a new one at runtime.
+
+I don't use any stubs or emulators for Kafka and MongoDB. Instead I use Testcontainers which is a great tool when you need to instantiate a service just for testing with just a little Java code.
+
+`@ClassRule` means that the object implements some before and after code. In case of Testcontainers they pull a docker image, run it at the class test start and stop it after. I want it to be `static` because I use the hosts in the `Environment` setup in `Initializer` class. All of it happen at the test class initialization.
+
+`@Autowired` annotation lets to wire up a Bean of specified class.
+
+The actual test creates `LightningReceiver` without autowiring and executes its method `.lightningStreaming()` and then `.waitUntilFinish()` on the PipelineResult. In the `Initializer` I specified `kafka.limit` that makes `KafkaIO.Read` to be constructed with `maxNumRecords`, hence it's a executed as a batch pipeline much easier to test, it doesn't need to be executed asynchronously.
+
+Before that KafkaRecords are sent using the `KafkaProducer`.
+
+Then I just need to read from MongoDB and validate whether it received the expected data.
+
+The whole code:
 
 ```java
 @RunWith(SpringRunner.class)
@@ -581,6 +630,7 @@ I will write separate integration tests for the `LightningReceiver` and `Lightni
 public class LightningReceiverTest {
   private static final String KAFKA_TOPIC = "lightning_topic";
   private static final int KAFKA_LIMIT = 100;
+  private static final long NOW = Instant.now().toEpochMilli();
 
   @Autowired
   LightningRepository lightningRepository;
@@ -611,7 +661,7 @@ public class LightningReceiverTest {
           "kafka.topic=" + KAFKA_TOPIC,
           "kafka.auto.offset.reset=earliest",
           "kafka.limit=" + KAFKA_LIMIT,
-          "beam.window.size=1"
+          "beam.window.size=60"
       ).applyTo(configurableApplicationContext.getEnvironment());
     }
   }
@@ -631,7 +681,7 @@ public class LightningReceiverTest {
         .map(i -> Lightning.builder()
             .coordinates(Coordinates.of(i, i))
             .power(i)
-            .timestamp(i)
+            .timestamp(NOW)
             .strokeTheGround(i % 2 == 0)
             .build())
         .toArray(Lightning[]::new);
@@ -659,7 +709,7 @@ public class LightningReceiverTest {
     Lightning lightning = Lightning.builder()
         .coordinates(Coordinates.of(i, i))
         .power(i)
-        .timestamp(i)
+        .timestamp(NOW)
         .strokeTheGround(i % 2 == 0)
         .build();
     String jsonLightning;
@@ -668,7 +718,7 @@ public class LightningReceiverTest {
     } catch (IOException e) {
       throw new RuntimeException(e);
     }
-    return new ProducerRecord<>(KAFKA_TOPIC, i, jsonLightning);
+    return new ProducerRecord<>(KAFKA_TOPIC, null, lightning.getTimestamp(), i, jsonLightning);
   }
 
   private KafkaProducer<Long, String> createProducer(String bootstrapServers) {
@@ -688,27 +738,10 @@ public class LightningReceiverTest {
 }
 ```
 
-To test the app that runs streaming pipelines there is a need for an ability to stop them. Luckily some of the Apache Beam's transforms provide a utility like `withMaxNumRecords` that I used earlier.
-
-The test runs with `@RunWith(SpringRunner.class)` to be able to initialize Spring context and `@ContextConfiguration` imports necessary Beans and provides an initializer - that's because kafka bootstrap servers and mongo host will be known in runtime so I couldn't use an `test-application.yml` in the test's resources.
-
-Hence the need for `Initializer` class that replaces the `Environment` with a new one at runtime.
-
-I don't use any stubs or emulators for Kafka and MongoDB. Instead I use Testcontainers which is a great tool when you need to instantiate a service just for testing with just a little Java code.
-
-`@ClassRule` means that the object implements some before and after code. In case of Testcontainers they pull a docker image, run it at the class test start and stop it after. I want it to be `static` because I use the hosts in the `Environment` setup in `Initializer` class. All of it happen at the test class initialization.
-
-`@Autowired` annotation lets to wire up a Bean of specified class.
-
-The actual test creates `LightningReceiver` without autowiring and executes its method `.lightningStreaming()` and then `.waitUntilFinish()` on the PipelineResult. In the `Initializer` I specified `kafka.limit` that makes `KafkaIO.Read` to be constructed with `maxNumRecords`, hence it's a executed as a batch pipeline much easier to test, it doesn't need to be executed asynchronously.
-
-Before that KafkaRecords are sent using the `KafkaProducer`.
-
-Then I just need to read from MongoDB and validate whether it received the expected data.
-
 ### Emulator test
 
-At first I will write a fake generator that produces deterministic outputs:
+First I will write a fake generator that produces deterministic outputs:
+
 ```java
 public class FakeGenerator extends LightningGenerator {
   private final AtomicInteger counter = new AtomicInteger();
