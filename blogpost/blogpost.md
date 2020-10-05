@@ -206,6 +206,9 @@ Coordinates can then be created like this:
 The rest of class annotations are the Lombok ones that are quite self-explanatory. I want to exclude `id` from equals so it will be easier to test. I need setters and empty contructor for Jackson to be able to parse it to/from json representation out of the box.
 
 `@Id` annotation goes along with `@Document`. It specifies the id of the Mongo object.
+
+`@JsonIgnore` makes object mappers skip the field when converting the object from/to json.
+
 The lightning object contains information about its power (in Watts), timestamp, whether it stroke the ground, and the coordinates where it happened on the Planet.
 
 ```java
@@ -218,6 +221,7 @@ The lightning object contains information about its power (in Watts), timestamp,
 @EqualsAndHashCode(exclude = "id")
 public class Lightning {
   @Id
+  @JsonIgnore
   String id;
   long timestamp;
   long power;
