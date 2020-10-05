@@ -87,7 +87,7 @@ public class LightningEmulator {
         throw new RuntimeException("Could not map lightning object to json string", e);
       }
       log.info("Writing lightning {} to kafka", jsonLightning);
-      return new ProducerRecord<>(topic, idCounter.getAndIncrement(), jsonLightning);
+      return new ProducerRecord<>(topic, null, lightning.getTimestamp(), idCounter.getAndIncrement(), jsonLightning);
     }
   }
 }

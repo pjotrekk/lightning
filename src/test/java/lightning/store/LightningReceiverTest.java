@@ -27,6 +27,7 @@ import org.testcontainers.containers.MongoDBContainer;
 import org.testcontainers.utility.DockerImageName;
 
 import java.io.IOException;
+import java.time.Instant;
 import java.util.List;
 import java.util.Properties;
 import java.util.concurrent.ExecutionException;
@@ -44,6 +45,7 @@ import static org.junit.Assert.assertThat;
 public class LightningReceiverTest {
   private static final String KAFKA_TOPIC = "lightning_topic";
   private static final int KAFKA_LIMIT = 100;
+  private static final long NOW = Instant.now().toEpochMilli();
 
   @Autowired
   LightningRepository lightningRepository;
@@ -74,7 +76,7 @@ public class LightningReceiverTest {
           "kafka.topic=" + KAFKA_TOPIC,
           "kafka.auto.offset.reset=earliest",
           "kafka.limit=" + KAFKA_LIMIT,
-          "beam.window.size=1"
+          "beam.window.size=60"
       ).applyTo(configurableApplicationContext.getEnvironment());
     }
   }
@@ -94,7 +96,7 @@ public class LightningReceiverTest {
         .map(i -> Lightning.builder()
             .coordinates(Coordinates.of(i, i))
             .power(i)
-            .timestamp(i)
+            .timestamp(NOW)
             .strokeTheGround(i % 2 == 0)
             .build())
         .toArray(Lightning[]::new);
@@ -122,7 +124,7 @@ public class LightningReceiverTest {
     Lightning lightning = Lightning.builder()
         .coordinates(Coordinates.of(i, i))
         .power(i)
-        .timestamp(i)
+        .timestamp(NOW)
         .strokeTheGround(i % 2 == 0)
         .build();
     String jsonLightning;
@@ -131,7 +133,7 @@ public class LightningReceiverTest {
     } catch (IOException e) {
       throw new RuntimeException(e);
     }
-    return new ProducerRecord<>(KAFKA_TOPIC, i, jsonLightning);
+    return new ProducerRecord<>(KAFKA_TOPIC, null, lightning.getTimestamp(), i, jsonLightning);
   }
 
   private KafkaProducer<Long, String> createProducer(String bootstrapServers) {

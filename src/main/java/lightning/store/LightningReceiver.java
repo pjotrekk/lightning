@@ -14,7 +14,8 @@ import org.apache.beam.sdk.transforms.DoFn;
 import org.apache.beam.sdk.transforms.Filter;
 import org.apache.beam.sdk.transforms.MapElements;
 import org.apache.beam.sdk.transforms.ParDo;
-import org.apache.beam.sdk.transforms.WithTimestamps;
+import org.apache.beam.sdk.transforms.windowing.AfterProcessingTime;
+import org.apache.beam.sdk.transforms.windowing.AfterWatermark;
 import org.apache.beam.sdk.transforms.windowing.FixedWindows;
 import org.apache.beam.sdk.transforms.windowing.Window;
 import org.apache.beam.sdk.values.PCollection;
@@ -24,7 +25,6 @@ import org.apache.kafka.common.serialization.LongDeserializer;
 import org.apache.kafka.common.serialization.StringDeserializer;
 import org.bson.Document;
 import org.joda.time.Duration;
-import org.joda.time.Instant;
 import org.springframework.core.env.Environment;
 import org.springframework.stereotype.Component;
 
@@ -35,6 +35,9 @@ import java.util.concurrent.Executor;
 @Log4j2
 @RequiredArgsConstructor
 public class LightningReceiver {
+  private static final Duration ALLOWED_LATENESS = Duration.standardMinutes(120);
+  private static final Duration TEN_MINUTES = Duration.standardMinutes(10);
+
   private final Environment env;
   private final PipelineOptions pipelineOptions;
   private final Executor executor;
@@ -52,7 +55,8 @@ public class LightningReceiver {
         .withTopic(env.getProperty("kafka.topic"))
         .withConsumerConfigUpdates(ImmutableMap.of("auto.offset.reset", env.getProperty("kafka.auto.offset.reset")))
         .withKeyDeserializer(LongDeserializer.class)
-        .withValueDeserializer(StringDeserializer.class);
+        .withValueDeserializer(StringDeserializer.class)
+        .withCreateTime(Duration.standardDays(1));
 
     Integer limit = env.getProperty("kafka.limit", Integer.class);
     if (limit != null) {
@@ -83,24 +87,34 @@ public class LightningReceiver {
 
   private void applyCountStrokeTheGroundLightnings(PCollection<Document> pc) {
     Integer windowSize = env.getProperty("beam.window.size", Integer.class);
+    Duration windowDuration = Duration.standardSeconds(windowSize);
     pc
-      .apply("Filter hit the ground ones", Filter.by(document -> document.getBoolean("strokeTheGround")))
-      .apply("Add timestamp", WithTimestamps.of(document -> Instant.now()))
-      .apply("Apply fixed windows", Window.into(FixedWindows.of(Duration.standardSeconds(windowSize))))
+      .apply("Filter by strokeTheGround", Filter.by(document -> document.getBoolean("strokeTheGround")))
+      .apply(
+          "Apply fixed windows",
+          Window.<Document>into(FixedWindows.of(windowDuration))
+              .triggering(
+                  AfterWatermark.pastEndOfWindow()
+                      .withLateFirings(
+                          AfterProcessingTime.pastFirstElementInPane()
+                              .plusDelayOf(TEN_MINUTES)))
+              .withAllowedLateness(ALLOWED_LATENESS)
+              .accumulatingFiredPanes()
+      )
       .apply(
           "Count lightnings that stroke the ground this minute",
           Combine.globally(Count.<Document>combineFn()).withoutDefaults())
-      .apply("Map to Mongo Document", ParDo.of(new CreateStrikesJson(windowSize)))
+      .apply("Map to Mongo Document", ParDo.of(new CreateStrikesDocument(windowSize)))
       .apply("Write strikes count to database", MongoDbIO.write()
           .withDatabase(env.getProperty("mongo.database"))
           .withCollection(env.getProperty("mongo.collection.strikes"))
           .withUri(env.getProperty("mongo.host")));
   }
 
-  private static class CreateStrikesJson extends DoFn<Long, Document> {
+  private static class CreateStrikesDocument extends DoFn<Long, Document> {
     private final long seconds;
 
-    CreateStrikesJson(long seconds) {
+    CreateStrikesDocument(long seconds) {
       this.seconds = seconds;
     }
 

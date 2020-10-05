@@ -1,5 +1,6 @@
 package lightning.model;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.EqualsAndHashCode;
@@ -18,6 +19,7 @@ import org.springframework.data.mongodb.core.mapping.Document;
 @EqualsAndHashCode(exclude = "id")
 public class Lightning {
   @Id
+  @JsonIgnore
   String id;
   long timestamp;
   long power;
