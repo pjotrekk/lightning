@@ -816,9 +816,8 @@ This will set up the Kafka and MongoDB instances
 ```
 ./mvnw spring-boot:run
 ```
-This will build and run the application.
-
-You can also open the project in IntelliJ and run it via `LightningApplication` main method.
+This will build and run the application. You need Java 11 installed to perform this.
+You can also open the project in IntelliJ and run it via `LightningApplication`'s main method.
 
 ### Use it
 
