@@ -11,21 +11,21 @@ If you are not familiar with Spring Boot I encourage you to read Michal's great 
 
 ## Setting things up
 
-At first we want to use Spring Boot. We will use Spring Initializr so we can easily start with a ready-to-go project.
+At first I want to use Spring Boot. I will use Spring Initializr so I can easily start with a ready-to-go project.
 
 ![image](initializr.png)
 
-I usually use Gradle but for this simple project I've chosen Maven as the build tool - it's popular and simple. We will not do any magic here so it's perfectly sufficient.
+I usually use Gradle but for this simple project I've chosen Maven as the build tool - it's popular and simple. I'll not do any magic here so it's perfectly sufficient.
 
 Next, I checked Spring Boot version 2.2.11 because the Apache Beam's MongoDB IO uses Mongo Java driver 3. The later versions of Spring Data MongoDB use Mongo Java Driver 4 so for now they are not compatible.
 
-We'll need some additional dependencies:
+Some additional dependencies are needed:
 - Spring Web to be able to expose REST endpoints with an embedded Tomcat container
 - Spring Data MongoDB for an integration with MongoDB
 - Lombok to reduce lots of boilerplate code.
 - I will use Testcontainers to easily perform integration tests on the real Apache Kafka and MongoDB instances. I will bump its version from 1.14.3 to the fresh 1.15.0.
 
-I will not use Spring for Apache Kafka - Beam will handle everything for us. We'll write some producer code ourselves to test our Beans with Beam pipeline but that's all. I added the 2.6.0 of kafka-clients dependency:
+I will not use Spring for Apache Kafka - Beam will handle everything for us. I'll write some producer code ourselves to test our Beans with Beam pipeline but that's all. I added the 2.6.0 of kafka-clients dependency:
 ```xml
 <dependency>
     <groupId>org.apache.kafka</groupId>
@@ -34,7 +34,7 @@ I will not use Spring for Apache Kafka - Beam will handle everything for us. We'
 </dependency>
 ```
 
-Also, Apache Beam dependencies are needed too. We can find them in mvnrepository. 
+Also, Apache Beam dependencies are needed too. They can be found in mvnrepository. 
 ```xml
 <dependency>
     <groupId>org.apache.beam</groupId>
@@ -61,8 +61,6 @@ I also want to be able to read and write from Kafka, so I need this Beam IO depe
 </dependency>
 ```
 Same, for the ability to write to MongoDB.
-
-And now everything is set up indeed!
 
 Right now our app contains all the needed dependencies and a simple Java class LightningApplication.
 
@@ -184,7 +182,7 @@ public class Coordinates {
 }
 ```
 Coordinates are a simple pair of longitude and latitude.
-I'm using a lot of Lombok here to generate getters, setters and constructors as well as equals and hashcode. What is interesting here is the staticName of the constructor. It makes the constructor private and replaces it with static factory pattern. We can then create a coordinate like this:
+I'm using a lot of Lombok here to generate getters, setters and constructors as well as equals and hashcode. What is interesting here is the staticName of the constructor. It makes the constructor private and replaces it with static factory pattern. Coordinates can then be created like this:
 ```
 Coordinates coord = Coordinates.of(4.0, 2.0);
 ```
@@ -360,17 +358,18 @@ public class LightningEmulator {
 ```
 
 A lot is going on here.
-`@Profile("withEmulator")` - the app is supposed to read data from the real lightning detectors so we want to have the ability to enable/disable the emulator. There are lots of ways to specify the Spring Profile. I've chosen to have it in the application.yml as `spring.profiles.active` so you can just run the app without additional params. To disable it just comment/remove these lines.
+`@Profile("withEmulator")` - the app is supposed to read data from the real lightning detectors so I want to have the ability to enable/disable the emulator. There are lots of ways to specify the Spring Profile. I've chosen to have it in the application.yml as `spring.profiles.active` so you can just run the app without additional params. To disable it just comment/remove these lines.
 
-`@Log4j2`, `@RequiredArgsConstructor` - these are Lombok annotations. The first generates a logger (We can use it via e.g. `log.info("message")`), the second generates a constructor for all fields that are final. As you see it fits great with Constructor Dependency Injection!
-We are injecting the Environment with all the needed information about the Kafka instance we're going to write to, the LightningGenerator we've just created (it's a @Component so we can inject it via constructor) and the Executor to run the pipeline in a separate Thread.
+`@Log4j2`, `@RequiredArgsConstructor` - these are Lombok annotations. The first generates a logger (you can use it via e.g. `log.info("message")`), the second generates a constructor for all fields that are final. As you see it fits great with Constructor Dependency Injection!
+
+I'm injecting the Environment with all the needed information about the Kafka instance I'm going to write to, the LightningGenerator I've just created (it's a @Component so you can inject it via constructor) and the Executor to run the pipeline in a separate Thread.
 
 Now let's get to the core - `sendLightningData()` method.
 At first it receives a `PipelineOptions` Bean and creates a `Pipeline` object using the given options.
 
-Then it creates a `GenerateSequence` Beam PTransform that generate sequence of `Long` values in the specified (from, to) range. If we don't specify `.to(limit)` then we get an infinite streaming input for our pipeline. Otherwise it's a simple batch. I also specified `.atRate(count, duration)` to specify how many elements to produce in given duration. I've chosen 1 element per 2 seconds. This object is applied to the pipeline.
+Then it creates a `GenerateSequence` Beam PTransform that generate sequence of `Long` values in the specified (from, to) range. If you don't specify `.to(limit)` then you get an infinite streaming input for our pipeline. Otherwise it's a simple batch. I also specified `.atRate(count, duration)` to specify how many elements to produce in given duration. I've chosen 1 element per 2 seconds. This object is applied to the pipeline.
 
-The next step is to map the value to something actually useful. `MapElements` transform enables just that. It's similiar to Java's Stream API `.map` function. It accepts a SimpleFunction object that we defined below. The lightning is generated and emitted as Kafka's `ProducerRecord`.
+The next step is to map the value to something actually useful. `MapElements` transform enables just that. It's similiar to Java's Stream API `.map` function. It accepts a SimpleFunction object that is defined below. The lightning is generated and emitted as Kafka's `ProducerRecord`.
 
 `.setCoder` is super important. Beam does not require to specify a coder for simple types, but for custom ones it needs to have a coder specified. The runner needs to be able to serialize and deserialize objects that are sent through the pipeline. It's not a simple in-memory stream.
 
@@ -471,12 +470,12 @@ public class LightningReceiver {
 
 This Bean reads from the Apache Kafka instance to MongoDB.
 
-Before applying the KafkaIO.Read I want to set `.withMaxNumRecords()` conditionally. It allows me to choose whether we want a batch (with maxNumRecords set) or a streaming pipeline. It will be very useful for testing.
+Before applying the KafkaIO.Read I want to set `.withMaxNumRecords()` conditionally. It allows me to choose whether I want a batch (with maxNumRecords set) or a streaming pipeline. It will be very useful for testing.
 
 Next the json string is parsed to MongoDB bson Document. This is the class required to write to MongoDB.
-The last step is to write the `Document` with lightning data to MongoDB using Beam's MongoDbIO.Write. We just apply it as everything else to the Mongo Collection 'lightnings'.
+The last step is to write the `Document` with lightning data to MongoDB using Beam's MongoDbIO.Write. Just apply it as everything else to the Mongo Collection 'lightnings'.
 
-But why stop there? Let's add an another branch to the pipeline tree starting with `applyCountStrokeTheGroundLightnings(jsonLightningData)`. We can do such a thing to every PCollection object.
+But why stop there? Let's add an another branch to the pipeline tree starting with `applyCountStrokeTheGroundLightnings(jsonLightningData)`. You can do such a thing to every PCollection object.
 
 This one is a bit more complicated and uses more of Beam's features.
 At first it filters out the lightnings that did not strike the ground (they discharged in the sky) using the `Filter.by(predicate)` transform.
@@ -518,7 +517,7 @@ public class MongoConfig extends AbstractMongoClientConfiguration {
 }
 ```
 
-Here we define a `@Configuration` Bean that extends `AbstractMongoClientConfiguration`. Just override few methods, privide our Environment parameters and voila! We have integrated MongoDB to our app.
+Here is defined a `@Configuration` Bean that extends `AbstractMongoClientConfiguration`. Just override few methods, privide our Environment parameters and voila! MongoDB has been integrated to the Lightning app.
 
 ```java
 public interface LightningRepository extends MongoRepository<Lightning, String> {
@@ -698,6 +697,7 @@ Hence the need for `Initializer` class that replaces the `Environment` with a ne
 I don't use any stubs or emulators for Kafka and MongoDB. Instead I use Testcontainers which is a great tool when you need to instantiate a service just for testing with just a little Java code.
 
 `@ClassRule` means that the object implements some before and after code. In case of Testcontainers they pull a docker image, run it at the class test start and stop it after. I want it to be `static` because I use the hosts in the `Environment` setup in `Initializer` class. All of it happen at the test class initialization.
+
 `@Autowired` annotation lets to wire up a Bean of specified class.
 
 The actual test creates `LightningReceiver` without autowiring and executes its method `.lightningStreaming()` and then `.waitUntilFinish()` on the PipelineResult. In the `Initializer` I specified `kafka.limit` that makes `KafkaIO.Read` to be constructed with `maxNumRecords`, hence it's a executed as a batch pipeline much easier to test, it doesn't need to be executed asynchronously.
