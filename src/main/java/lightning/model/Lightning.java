@@ -23,6 +23,6 @@ public class Lightning {
   String id;
   long timestamp;
   long power;
-  boolean strokeTheGround;
+  boolean struckTheGround;
   Coordinates coordinates;
 }
