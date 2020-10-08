@@ -2,7 +2,7 @@ mongo:
   host: mongodb://localhost:27017
   database: lightning_db
   collection:
-    lightnings: lightnings
+    lightning: lightning
     strikes: strikes
 
 beam:

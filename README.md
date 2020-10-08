@@ -41,7 +41,7 @@ and
 ```
 http://localhost:8080/strikes
 ```
-which returns count of the lightnings that stroke the ground in the interval of 1 minute.
+which returns count of the lightning that stroke the ground in the interval of 1 minute.
 
 ```
 {

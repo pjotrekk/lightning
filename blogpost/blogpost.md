@@ -1,7 +1,7 @@
 # Apache Beam streaming in a Spring Boot application. Use case.
-In this blog post I'll write a simple Spring Boot application using Apache Beam to stream data (with Apache Flink under the hood) from Apache Kafka to MongoDB and expose endpoints providing real-time data. The application will simulate a data center that receives data about lightnings around the world from a Kafka instance.
+In this blog post I'll write a simple Spring Boot application using Apache Beam to stream data (with Apache Flink under the hood) from Apache Kafka to MongoDB and expose endpoints providing real-time data. The application will simulate a data center that receives data about lightning around the world from a Kafka instance.
 
-It will expose 2 endpoints: one returns up-to-date data about received lightnings, and the second returns how many lightnings stroke the ground in a given time range.
+It will expose 2 endpoints: one returns up-to-date data about received lightning, and the second returns how many lightning stroke the ground in a given time range.
 
 I will also write an emulator that will simulate the detectors that receive the lightning and send the data to a Kafka instance.
 
@@ -119,7 +119,7 @@ mongo:
   host: mongodb://localhost:27017
   database: lightning_db
   collection:
-    lightnings: lightnings
+    lightning: lightning
     strikes: strikes
 
 beam:
@@ -212,7 +212,7 @@ The rest of class annotations are the Lombok ones that are quite self-explanator
 The lightning object contains information about its power (in Watts), timestamp, whether it stroke the ground, and the coordinates where it happened on the Planet.
 
 ```java
-@Document(collection = "lightnings")
+@Document(collection = "lightning")
 @Getter
 @Setter
 @NoArgsConstructor
@@ -246,7 +246,7 @@ An example JSON representation of a lightning will be:
 ```
 
 ### Strikes
-Later I'll gather also an information how many lightnings stroke the ground in a given time interval represented as millisecond timestamps [from, to].
+Later I'll gather also an information how many lightning stroke the ground in a given time interval represented as millisecond timestamps [from, to].
 
 ```java
 @Document(collection = "strikes")
@@ -444,18 +444,18 @@ public class LightningReceiver {
             }));
 
     // Add separate branch to the pipeline tree
-    applyCountStruckTheGroundLightnings(jsonLightningData);
+    applyCountStruckTheGroundLightning(jsonLightningData);
 
     jsonLightningData.apply("Write lightning data to MongoDB",
         MongoDbIO.write()
         .withDatabase(env.getProperty("mongo.database"))
-        .withCollection(env.getProperty("mongo.collection.lightnings"))
+        .withCollection(env.getProperty("mongo.collection.lightning"))
         .withUri(env.getProperty("mongo.host")));
 
     return pipeline.run();
   }
 
-  private void applyCountStruckTheGroundLightnings(PCollection<Document> pc) {
+  private void applyCountStruckTheGroundLightning(PCollection<Document> pc) {
     Integer windowSize = env.getProperty("beam.window.size", Integer.class);
     Duration windowDuration = Duration.standardSeconds(windowSize);
     pc
@@ -472,7 +472,7 @@ public class LightningReceiver {
               .accumulatingFiredPanes()
       )
       .apply(
-          "Count lightnings that stroke the ground this minute",
+          "Count lightning that stroke the ground this minute",
           Combine.globally(Count.<Document>combineFn()).withoutDefaults())
       .apply("Map to Mongo Document", ParDo.of(new CreateStrikesDocument(windowSize)))
       .apply("Write strikes count to database", MongoDbIO.write()
@@ -505,17 +505,17 @@ This Bean reads from the Apache Kafka instance to MongoDB.
 
 Before applying the KafkaIO.Read I want to set `.withMaxNumRecords()` conditionally. It allows me to choose whether I want a batch or a streaming pipeline. It will be very useful for testing. `.withCreateTime(maxDelay)` sets a timestamp to every record that comes with a KafkaRecord with a maxDelay specified. The timestamps are expected to be roughly monotonically increasing with a cap on out-of-order delays. It's essential for windowing which will come up in a moment.
 Next the json string is parsed to MongoDB bson Document. This is the class required to write to MongoDB.
-The last step is to write the `Document` with lightning data to MongoDB using Beam's MongoDbIO.Write. Just apply it as everything else to the Mongo Collection 'lightnings'.
+The last step is to write the `Document` with lightning data to MongoDB using Beam's MongoDbIO.Write. Just apply it as everything else to the Mongo Collection 'lightning'.
 
-But why stop there? Let's add another branch to the pipeline tree starting with `applyCountStruckTheGroundLightnings(jsonLightningData)`. You can do such a thing to every PCollection object.
+But why stop there? Let's add another branch to the pipeline tree starting with `applyCountStruckTheGroundLightning(jsonLightningData)`. You can do such a thing to every PCollection object.
 
 This one is a bit more complicated and uses more of Beam's features.
-At first it filters out the lightnings that did not strike the ground (they discharged in the sky) using the `Filter.by(predicate)` transform.
+At first it filters out the lightning that did not strike the ground (they discharged in the sky) using the `Filter.by(predicate)` transform.
 
 Then the streaming input gets windowed to the given windows value (from `beam.window.size`) with `Window.into(FixedWindows.of(duration))`. `.withLateFirings(TEN_MINUTES)` preceding with `AfterWatermark.pastEndOfWindow()` will emit late records every ten minutes after the end of the window. Records that come after `ALLOWED_LATENESS` are discarded and there are no emissions for this window anymore. A quick reminder - timestamp has been attached to the input in readFromKafka's `.withCreateTime()`.
 
 Windows are evaluated in combine transform `Combine.globally(Count.<Document>combineFn()).withoutDefaults()`. It counts every element for each window.
-Later the count value is mapped to Document with an information of the time window it counted the lightnings. It's done using ParDo.of(DoFn), which is another method of applying some transformation to the input, like MapElements. The class ParDo requires to inherit from DoFn and implement processElement method with `@ProcessElement` annotation.
+Later the count value is mapped to Document with an information of the time window it counted the lightning. It's done using ParDo.of(DoFn), which is another method of applying some transformation to the input, like MapElements. The class ParDo requires to inherit from DoFn and implement processElement method with `@ProcessElement` annotation.
 
 Then the document is written to another MongoDB Collection: `strikes`.
 
@@ -549,9 +549,9 @@ public class MongoConfig extends AbstractMongoClientConfiguration {
   }
 }
 ```
-Here I define a MongoRepository that returns Lightning objects. It can also filter its results by providing a timestamp and return only the lightnings after that time.
+Here I define a MongoRepository that returns Lightning objects. It can also filter its results by providing a timestamp and return only the lightning after that time.
 
-Remember that Lightning class had defined `@Document(collection = "lightnings")` - that's exactly how the repository knows where to search for the data.
+Remember that Lightning class had defined `@Document(collection = "lightning")` - that's exactly how the repository knows where to search for the data.
 
 ```java
 public interface LightningRepository extends MongoRepository<Lightning, String> {
@@ -563,7 +563,7 @@ I created another repository, this time for Strikes.
 ```java
 public interface StrikesRepository extends MongoRepository<Strikes, String> { }
 ```
-A REST controller for lightnings available at `localhost:8080/lightnings` with a possible timestamp parameter.
+A REST controller for lightning available at `localhost:8080/lightning` with a possible timestamp parameter.
 
 ```java
 @RestController
@@ -571,8 +571,8 @@ A REST controller for lightnings available at `localhost:8080/lightnings` with a
 public class LightningController {
   private final LightningRepository repository;
 
-  @GetMapping("/lightnings")
-  public List<Lightning> getAllLightnings(@RequestParam(required = false) Long timestamp) {
+  @GetMapping("/lightning")
+  public List<Lightning> getAllLightning(@RequestParam(required = false) Long timestamp) {
     if (timestamp != null) {
       return repository.findByTimestampGreaterThan(timestamp);
     }
@@ -657,7 +657,7 @@ public class LightningReceiverTest {
       TestPropertyValues.of(
           "mongo.host=" + mongoDbContainer.getReplicaSetUrl().replace("/test", ""),
           "mongo.database=test",
-          "mongo.collection.lightnings=lightnings",
+          "mongo.collection.lightning=lightning",
           "mongo.collection.strikes=strikes",
           "kafka.bootstrap.servers=" + kafkaContainer.getBootstrapServers(),
           "kafka.topic=" + KAFKA_TOPIC,
@@ -676,9 +676,9 @@ public class LightningReceiverTest {
 
     lightningReceiver.lightningStreaming().waitUntilFinish();
 
-    List<Lightning> lightnings = lightningRepository.findAll();
+    List<Lightning> lightning = lightningRepository.findAll();
 
-    Lightning[] expectedLightnings = Stream.iterate(0, i -> ++i)
+    Lightning[] expectedLightning = Stream.iterate(0, i -> ++i)
         .limit(KAFKA_LIMIT)
         .map(i -> Lightning.builder()
             .coordinates(Coordinates.of(i, i))
@@ -688,7 +688,7 @@ public class LightningReceiverTest {
             .build())
         .toArray(Lightning[]::new);
 
-    assertThat(lightnings, containsInAnyOrder(expectedLightnings));
+    assertThat(lightning, containsInAnyOrder(expectedLightning));
 
     List<Strikes> strikes = strikesRepository.findAll();
     assertThat(strikes, hasSize(greaterThan(0)));

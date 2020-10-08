@@ -74,18 +74,18 @@ public class LightningReceiver {
             }));
 
     // Add separate branch to the pipeline tree
-    applyCountStruckTheGroundLightnings(jsonLightningData);
+    applyCountStruckTheGroundLightning(jsonLightningData);
 
     jsonLightningData.apply("Write lightning data to MongoDB",
         MongoDbIO.write()
         .withDatabase(env.getProperty("mongo.database"))
-        .withCollection(env.getProperty("mongo.collection.lightnings"))
+        .withCollection(env.getProperty("mongo.collection.lightning"))
         .withUri(env.getProperty("mongo.host")));
 
     return pipeline.run();
   }
 
-  private void applyCountStruckTheGroundLightnings(PCollection<Document> pc) {
+  private void applyCountStruckTheGroundLightning(PCollection<Document> pc) {
     Integer windowSize = env.getProperty("beam.window.size", Integer.class);
     Duration windowDuration = Duration.standardSeconds(windowSize);
     pc
@@ -102,7 +102,7 @@ public class LightningReceiver {
               .accumulatingFiredPanes()
       )
       .apply(
-          "Count lightnings that stroke the ground this minute",
+          "Count lightning that stroke the ground this minute",
           Combine.globally(Count.<Document>combineFn()).withoutDefaults())
       .apply("Map to Mongo Document", ParDo.of(new CreateStrikesDocument(windowSize)))
       .apply("Write strikes count to database", MongoDbIO.write()

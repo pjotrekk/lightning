@@ -14,8 +14,8 @@ import java.util.List;
 public class LightningController {
   private final LightningRepository repository;
 
-  @GetMapping("/lightnings")
-  public List<Lightning> getAllLightnings(@RequestParam(required = false) Long timestamp) {
+  @GetMapping("/lightning")
+  public List<Lightning> getAllLightning(@RequestParam(required = false) Long timestamp) {
     if (timestamp != null) {
       return repository.findByTimestampGreaterThan(timestamp);
     }

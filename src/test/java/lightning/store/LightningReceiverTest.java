@@ -70,7 +70,7 @@ public class LightningReceiverTest {
       TestPropertyValues.of(
           "mongo.host=" + mongoDbContainer.getReplicaSetUrl().replace("/test", ""),
           "mongo.database=test",
-          "mongo.collection.lightnings=lightnings",
+          "mongo.collection.lightning=lightning",
           "mongo.collection.strikes=strikes",
           "kafka.bootstrap.servers=" + kafkaContainer.getBootstrapServers(),
           "kafka.topic=" + KAFKA_TOPIC,
@@ -89,9 +89,9 @@ public class LightningReceiverTest {
 
     lightningReceiver.lightningStreaming().waitUntilFinish();
 
-    List<Lightning> lightnings = lightningRepository.findAll();
+    List<Lightning> lightning = lightningRepository.findAll();
 
-    Lightning[] expectedLightnings = Stream.iterate(0, i -> ++i)
+    Lightning[] expectedLightning = Stream.iterate(0, i -> ++i)
         .limit(KAFKA_LIMIT)
         .map(i -> Lightning.builder()
             .coordinates(Coordinates.of(i, i))
@@ -101,7 +101,7 @@ public class LightningReceiverTest {
             .build())
         .toArray(Lightning[]::new);
 
-    assertThat(lightnings, containsInAnyOrder(expectedLightnings));
+    assertThat(lightning, containsInAnyOrder(expectedLightning));
 
     List<Strikes> strikes = strikesRepository.findAll();
     assertThat(strikes, hasSize(greaterThan(0)));
