@@ -29,7 +29,7 @@ The lightning data is in json format:
 {
   id: <string>,
   power: <int>,
-  strokeTheGround: <bool>,
+  struckTheGround: <bool>,
   timestamp: <int>,
   coordinates: {
     longitude: <real>,

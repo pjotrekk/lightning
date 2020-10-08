@@ -97,7 +97,7 @@ public class LightningReceiverTest {
             .coordinates(Coordinates.of(i, i))
             .power(i)
             .timestamp(NOW)
-            .strokeTheGround(i % 2 == 0)
+            .struckTheGround(i % 2 == 0)
             .build())
         .toArray(Lightning[]::new);
 
@@ -125,7 +125,7 @@ public class LightningReceiverTest {
         .coordinates(Coordinates.of(i, i))
         .power(i)
         .timestamp(NOW)
-        .strokeTheGround(i % 2 == 0)
+        .struckTheGround(i % 2 == 0)
         .build();
     String jsonLightning;
     try {

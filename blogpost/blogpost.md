@@ -225,7 +225,7 @@ public class Lightning {
   String id;
   long timestamp;
   long power;
-  boolean strokeTheGround;
+  boolean struckTheGround;
   Coordinates coordinates;
 }
 ```
@@ -236,7 +236,7 @@ An example JSON representation of a lightning will be:
 {
   "id": "some_id",
   "power": 5555,
-  "strokeTheGround": true,
+  "struckTheGround": true,
   "timestamp": 857584849,
   "coordinates": {
     "longitude": 45.32,
@@ -292,7 +292,7 @@ public class LightningGenerator implements Serializable {
   public Lightning generateLightning() {
     return Lightning.builder()
         .coordinates(generateCoordinates())
-        .strokeTheGround(random.nextBoolean())
+        .struckTheGround(random.nextBoolean())
         .power(random.nextLong())
         .timestamp(Instant.now().toEpochMilli())
         .build();
@@ -420,7 +420,6 @@ public class LightningReceiver {
 
   public PipelineResult lightningStreaming() {
     Pipeline pipeline = Pipeline.create(pipelineOptions);
-
     KafkaIO.Read<Long, String> kafkaRead = KafkaIO.<Long, String>read()
         .withBootstrapServers(env.getProperty("kafka.bootstrap.servers"))
         .withTopic(env.getProperty("kafka.topic"))
@@ -445,7 +444,7 @@ public class LightningReceiver {
             }));
 
     // Add separate branch to the pipeline tree
-    applyCountStrokeTheGroundLightnings(jsonLightningData);
+    applyCountStruckTheGroundLightnings(jsonLightningData);
 
     jsonLightningData.apply("Write lightning data to MongoDB",
         MongoDbIO.write()
@@ -456,11 +455,11 @@ public class LightningReceiver {
     return pipeline.run();
   }
 
-  private void applyCountStrokeTheGroundLightnings(PCollection<Document> pc) {
+  private void applyCountStruckTheGroundLightnings(PCollection<Document> pc) {
     Integer windowSize = env.getProperty("beam.window.size", Integer.class);
     Duration windowDuration = Duration.standardSeconds(windowSize);
     pc
-      .apply("Filter by strokeTheGround", Filter.by(document -> document.getBoolean("strokeTheGround")))
+      .apply("Filter by struckTheGround", Filter.by(document -> document.getBoolean("struckTheGround")))
       .apply(
           "Apply fixed windows",
           Window.<Document>into(FixedWindows.of(windowDuration))
@@ -504,17 +503,16 @@ public class LightningReceiver {
 
 This Bean reads from the Apache Kafka instance to MongoDB.
 
-Before applying the KafkaIO.Read I want to set `.withMaxNumRecords()` conditionally. It allows me to choose whether I want a batch (with maxNumRecords set) or a streaming pipeline. It will be very useful for testing. `.withCreateTime(maxDelay)` sets the timestamp that comes with a KafkaRecord with a maxDelay specified. It's essential for windowing which will come up in a moment.
-
+Before applying the KafkaIO.Read I want to set `.withMaxNumRecords()` conditionally. It allows me to choose whether I want a batch or a streaming pipeline. It will be very useful for testing. `.withCreateTime(maxDelay)` sets a timestamp to every record that comes with a KafkaRecord with a maxDelay specified. The timestamps are expected to be roughly monotonically increasing with a cap on out-of-order delays. It's essential for windowing which will come up in a moment.
 Next the json string is parsed to MongoDB bson Document. This is the class required to write to MongoDB.
 The last step is to write the `Document` with lightning data to MongoDB using Beam's MongoDbIO.Write. Just apply it as everything else to the Mongo Collection 'lightnings'.
 
-But why stop there? Let's add an another branch to the pipeline tree starting with `applyCountStrokeTheGroundLightnings(jsonLightningData)`. You can do such a thing to every PCollection object.
+But why stop there? Let's add another branch to the pipeline tree starting with `applyCountStruckTheGroundLightnings(jsonLightningData)`. You can do such a thing to every PCollection object.
 
 This one is a bit more complicated and uses more of Beam's features.
 At first it filters out the lightnings that did not strike the ground (they discharged in the sky) using the `Filter.by(predicate)` transform.
 
-Then the streaming input gets windowed to the given windows value (from `beam.window.size`) with `Window.into(FixedWindows.of(duration))`. `.withLateFirings(TEN_MINUTES)` will emit late records every ten minutes. Records that come after `ALLOWED_LATENESS` are discarded and there are no emissions for this window anymore. A quick reminder - timestamp has been attached to the input in readFromKafka' `.withCreateTime()`.
+Then the streaming input gets windowed to the given windows value (from `beam.window.size`) with `Window.into(FixedWindows.of(duration))`. `.withLateFirings(TEN_MINUTES)` preceding with `AfterWatermark.pastEndOfWindow()` will emit late records every ten minutes after the end of the window. Records that come after `ALLOWED_LATENESS` are discarded and there are no emissions for this window anymore. A quick reminder - timestamp has been attached to the input in readFromKafka's `.withCreateTime()`.
 
 Windows are evaluated in combine transform `Combine.globally(Count.<Document>combineFn()).withoutDefaults()`. It counts every element for each window.
 Later the count value is mapped to Document with an information of the time window it counted the lightnings. It's done using ParDo.of(DoFn), which is another method of applying some transformation to the input, like MapElements. The class ParDo requires to inherit from DoFn and implement processElement method with `@ProcessElement` annotation.
@@ -686,7 +684,7 @@ public class LightningReceiverTest {
             .coordinates(Coordinates.of(i, i))
             .power(i)
             .timestamp(NOW)
-            .strokeTheGround(i % 2 == 0)
+            .struckTheGround(i % 2 == 0)
             .build())
         .toArray(Lightning[]::new);
 
@@ -714,7 +712,7 @@ public class LightningReceiverTest {
         .coordinates(Coordinates.of(i, i))
         .power(i)
         .timestamp(NOW)
-        .strokeTheGround(i % 2 == 0)
+        .struckTheGround(i % 2 == 0)
         .build();
     String jsonLightning;
     try {
@@ -753,7 +751,7 @@ public class FakeGenerator extends LightningGenerator {
   public Lightning generateLightning(int i) {
     return Lightning.builder()
         .coordinates(Coordinates.of(i % (MAX_LONGITUDE * 2) - MAX_LONGITUDE, i % (MAX_LATITUDE * 2) - MAX_LATITUDE))
-        .strokeTheGround(i % 2 == 0)
+        .struckTheGround(i % 2 == 0)
         .power((i + 1) * 1_000_000_000L)
         .timestamp(i + 20)
         .build();

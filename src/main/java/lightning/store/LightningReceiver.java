@@ -74,7 +74,7 @@ public class LightningReceiver {
             }));
 
     // Add separate branch to the pipeline tree
-    applyCountStrokeTheGroundLightnings(jsonLightningData);
+    applyCountStruckTheGroundLightnings(jsonLightningData);
 
     jsonLightningData.apply("Write lightning data to MongoDB",
         MongoDbIO.write()
@@ -85,11 +85,11 @@ public class LightningReceiver {
     return pipeline.run();
   }
 
-  private void applyCountStrokeTheGroundLightnings(PCollection<Document> pc) {
+  private void applyCountStruckTheGroundLightnings(PCollection<Document> pc) {
     Integer windowSize = env.getProperty("beam.window.size", Integer.class);
     Duration windowDuration = Duration.standardSeconds(windowSize);
     pc
-      .apply("Filter by strokeTheGround", Filter.by(document -> document.getBoolean("strokeTheGround")))
+      .apply("Filter by struckTheGround", Filter.by(document -> document.getBoolean("struckTheGround")))
       .apply(
           "Apply fixed windows",
           Window.<Document>into(FixedWindows.of(windowDuration))

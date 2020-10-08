@@ -18,7 +18,7 @@ public class LightningGenerator implements Serializable {
   public Lightning generateLightning() {
     return Lightning.builder()
         .coordinates(generateCoordinates())
-        .strokeTheGround(random.nextBoolean())
+        .struckTheGround(random.nextBoolean())
         .power(random.nextLong())
         .timestamp(Instant.now().toEpochMilli())
         .build();
